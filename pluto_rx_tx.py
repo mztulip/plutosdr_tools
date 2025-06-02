@@ -7,14 +7,15 @@ import humanize
 import threading
 import tty, termios
 
+# https://pysdr.org/content/pluto.html
 # https://github.com/analogdevicesinc/pyadi-iio/blob/master/adi/ad936x.py
 
 sample_rate = 32e6 # Hz
 # center_freq = 2501e6 # Hz
 center_freq = 900e6 # Hz
 
-# device = "pluto"
-device = "libresdr"
+device = "pluto"
+# device = "libresdr"
 
 if device == "pluto":
     sdr = adi.Pluto("ip:pluto.local")
@@ -116,7 +117,8 @@ keyb_thread.start()
 print("Press q to exit, <-,-> to change attenuation, up/down-change frequency")
 
 while exit is False:
-    print(f"\n\rTX hardware gain: {sdr.tx_hardwaregain_chan0 } Freq: {humanize.scientific(sdr.tx_lo, precision = 6)}")
+    rssi = sdr._get_iio_attr('voltage0','rssi', False)
+    print(f"\n\rTX hardware gain: {sdr.tx_hardwaregain_chan0 } Freq: {humanize.scientific(sdr.tx_lo, precision = 6)} RSSI: -{rssi}dB")
     time.sleep(0.5)
 
 keyb_thread.join()
