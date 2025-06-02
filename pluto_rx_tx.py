@@ -6,6 +6,7 @@ import time
 import humanize
 import threading
 import tty, termios
+from scipy.signal import kaiserord, firwin, lfilter, fftconvolve, oaconvolve
 
 # https://pysdr.org/content/pluto.html
 # https://github.com/analogdevicesinc/pyadi-iio/blob/master/adi/ad936x.py
@@ -30,6 +31,12 @@ sdr.sample_rate = int(sample_rate)
 sdr.tx_rf_bandwidth = int(sample_rate) # filter cutoff, just set it to the same as sample rate
 sdr.tx_lo = int(center_freq)
 sdr.tx_hardwaregain_chan0 = -30 # Increase to increase tx power, valid range is -89 to 0 dB
+sdr.gain_control_mode_chan0 = "manual"
+sdr.rx_hardwaregain_chan0   = 0
+sdr.rx_buffer_size          = 350000
+sdr.rx_rf_bandwidth         = int(4e6)
+sdr.tx_rf_bandwidth         = int(4e6)
+sdr.sample_rate             = int(8e6)
 
 #Normally at 1GHz
 # -10 gives -10dBm
@@ -116,10 +123,39 @@ keyb_thread = threading.Thread(target=keyboard_thread_func)
 keyb_thread.start()
 print("Press q to exit, <-,-> to change attenuation, up/down-change frequency")
 
+sample_rate = 8e6
+nyq_rate = sample_rate / 2.0
+
+#Filter ribble 70 means also that attenuation in stop band is 70dB
+FILT_RIPPLE_DB, FILT_CUTOFF_HZ, FILT_TRANS_WIDTH_HZ = 70, 500, 1000
+N, beta = kaiserord(FILT_RIPPLE_DB, FILT_TRANS_WIDTH_HZ/nyq_rate)
+print(f"N: {N}")
+b_fir   = firwin(N, FILT_CUTOFF_HZ/nyq_rate, window=('kaiser', beta))
+
 while exit is False:
+    #clean old buffer data by empty reading
+    sdr.rx()
+
+    iq_buffer = np.zeros(350000 * 2, np.complex64)
+    iq_buffer[0:350000] = sdr.rx()/(2**12)
+    iq_buffer[350000:2*350000] = sdr.rx()/(2**12)
+
+    # Move 524e3 TX tone to DC
+    t = np.arange(len(iq_buffer)) / 8e6
+    iq_data = iq_buffer * np.exp(-2j * np.pi * 524e3 * t)
+    iq_filtered = fftconvolve(iq_data, b_fir, mode='same')
+    #Remove FIR filter transient response
+    iq_filtered = iq_filtered[N:]
+    dc_value = np.abs(iq_filtered).mean()
+
+    db_value = 20 * np.log10(dc_value)
+
     rssi = sdr._get_iio_attr('voltage0','rssi', False)
-    print(f"\n\rTX hardware gain: {sdr.tx_hardwaregain_chan0 } Freq: {humanize.scientific(sdr.tx_lo, precision = 6)} RSSI: -{rssi}dB")
-    time.sleep(0.5)
+    print(f"\n\rTX hardware gain: {sdr.tx_hardwaregain_chan0 } Freq: {sdr.tx_lo/1e6}MHz RSSI: -{rssi}dB"
+        f" db: {db_value}dB ADC(0-1): {dc_value}")
+
+   
+
 
 keyb_thread.join()
 
